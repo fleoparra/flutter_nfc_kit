@@ -1,6 +1,7 @@
 package im.nfc.flutter_nfc_kit
 
 import android.app.Activity
+import android.content.Intent.getIntent
 import android.nfc.FormatException
 import android.nfc.NdefMessage
 import android.nfc.NdefRecord
@@ -27,7 +28,30 @@ import java.util.*
 import kotlin.concurrent.schedule
 
 
-class FlutterNfcKitPlugin : FlutterPlugin, MethodCallHandler, ActivityAware {
+class FlutterNfcKitPlugin : FlutterPlugin, MethodCallHandler, ActivityAware, PluginRegistry.NewIntentListener {
+
+    override fun onNewIntent(intent:Intent):Boolean  {
+        Log.i(TAG, "FLUTTER: onNewIntent")
+        val appLinkAction: String? = intent?.action
+        var tag: Tag?
+        if (NfcAdapter.ACTION_TAG_DISCOVERED == appLinkAction || NfcAdapter.ACTION_TECH_DISCOVERED == appLinkAction) {
+            tag = intent.getParcelableExtra(NfcAdapter.EXTRA_TAG)
+            if (tag != null) {
+                val techList: Array<String> = tag.getTechList()
+                val searchedTech: String = IsoDep::class.java.getName()
+                for (tech in techList) {
+                    if (searchedTech.equals(tech)) {
+                        res = true
+                        break
+                    }
+                }
+            }
+        }
+        if(res){
+
+        }
+        return false;
+    }
 
     companion object {
         private val TAG = FlutterNfcKitPlugin::class.java.name
