@@ -1,16 +1,24 @@
 import 'dart:async';
 import 'dart:io' show Platform, sleep;
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_nfc_kit/flutter_nfc_kit.dart';
+import 'package:logging/logging.dart';
 import 'package:ndef/ndef.dart' as ndef;
 
 import 'record-setting/raw_record_setting.dart';
 import 'record-setting/text_record_setting.dart';
 import 'record-setting/uri_record_setting.dart';
 
-void main() => runApp(MaterialApp(home: MyApp()));
+void main() {
+  Logger.root.level = Level.ALL; // defaults to Level.INFO
+  Logger.root.onRecord.listen((record) {
+    print('${record.level.name}: ${record.time}: ${record.message}');
+  });
+  runApp(MaterialApp(theme: ThemeData(useMaterial3: true), home: MyApp()));
+}
 
 class MyApp extends StatefulWidget {
   @override
@@ -18,23 +26,27 @@ class MyApp extends StatefulWidget {
 }
 
 class _MyAppState extends State<MyApp> with SingleTickerProviderStateMixin {
-  String _platformVersion =
-      '${Platform.operatingSystem} ${Platform.operatingSystemVersion}';
+  String _platformVersion = '';
   NFCAvailability _availability = NFCAvailability.not_supported;
   NFCTag? _tag;
   String? _result, _writeResult;
-  TabController? _tabController;
+  late TabController _tabController;
   List<ndef.NDEFRecord>? _records;
 
   @override
   void dispose() {
-    _tabController!.dispose();
+    _tabController.dispose();
     super.dispose();
   }
 
   @override
   void initState() {
     super.initState();
+    if (!kIsWeb)
+      _platformVersion =
+          '${Platform.operatingSystem} ${Platform.operatingSystemVersion}';
+    else
+      _platformVersion = 'Web';
     initPlatformState();
     _tabController = new TabController(length: 2, vsync: this);
     _records = [];
@@ -68,8 +80,8 @@ class _MyAppState extends State<MyApp> with SingleTickerProviderStateMixin {
             title: const Text('NFC Flutter Kit Example App'),
             bottom: TabBar(
               tabs: <Widget>[
-                Tab(text: 'read'),
-                Tab(text: 'write'),
+                Tab(text: 'Read'),
+                Tab(text: 'Write'),
               ],
               controller: _tabController,
             )),
@@ -80,7 +92,9 @@ class _MyAppState extends State<MyApp> with SingleTickerProviderStateMixin {
                       child: Column(
                           mainAxisAlignment: MainAxisAlignment.center,
                           children: <Widget>[
+                const SizedBox(height: 20),
                 Text('Running on: $_platformVersion\nNFC: $_availability'),
+                const SizedBox(height: 10),
                 ElevatedButton(
                   onPressed: () async {
                     try {
@@ -89,7 +103,7 @@ class _MyAppState extends State<MyApp> with SingleTickerProviderStateMixin {
                         _tag = tag;
                       });
                       await FlutterNfcKit.setIosAlertMessage(
-                          "working on it...");
+                          "Working on it...");
                       if (tag.standard == "ISO 14443-4 (Type B)") {
                         String result1 =
                             await FlutterNfcKit.transceive("00B0950000");
@@ -100,19 +114,25 @@ class _MyAppState extends State<MyApp> with SingleTickerProviderStateMixin {
                         });
                       } else if (tag.type == NFCTagType.iso18092) {
                         String result1 =
-                            await FlutterNfcKit.transceive("060080080100");
+                          await FlutterNfcKit.transceive("060080080100");
                         setState(() {
                           _result = '1: $result1\n';
                         });
                       } else if (tag.type == NFCTagType.mifare_ultralight ||
-                          tag.type == NFCTagType.mifare_classic) {
+                          tag.type == NFCTagType.mifare_classic ||
+                          tag.type == NFCTagType.iso15693) {
                         var ndefRecords = await FlutterNfcKit.readNDEFRecords();
-                        var ndefString = ndefRecords
-                            .map((r) => r.toString())
-                            .reduce((value, element) => value + "\n" + element);
+                        var ndefString = '';
+                        for (int i = 0; i < ndefRecords.length; i++) {
+                          ndefString += '${i + 1}: ${ndefRecords[i]}\n';
+                        }
                         setState(() {
-                          _result = '1: $ndefString\n';
+                          _result = ndefString;
                         });
+                      } else if (tag.type == NFCTagType.webusb) {
+                        var r = await FlutterNfcKit.transceive(
+                            "00A4040006D27600012401");
+                        print(r);
                       }
                     } catch (e) {
                       setState(() {
@@ -121,20 +141,24 @@ class _MyAppState extends State<MyApp> with SingleTickerProviderStateMixin {
                     }
 
                     // Pretend that we are working
-                    sleep(new Duration(seconds: 1));
+                    if (!kIsWeb) sleep(new Duration(seconds: 1));
                     await FlutterNfcKit.finish(iosAlertMessage: "Finished!");
                   },
                   child: Text('Start polling'),
                 ),
-                _tag != null
-                    ? Text(
-                        'ID: ${_tag!.id}\nStandard: ${_tag!.standard}\nType: ${_tag!.type}\nATQA: ${_tag!.atqa}\nSAK: ${_tag!.sak}\nHistorical Bytes: ${_tag!.historicalBytes}\nProtocol Info: ${_tag!.protocolInfo}\nApplication Data: ${_tag!.applicationData}\nHigher Layer Response: ${_tag!.hiLayerResponse}\nManufacturer: ${_tag!.manufacturer}\nSystem Code: ${_tag!.systemCode}\nDSF ID: ${_tag!.dsfId}\nNDEF Available: ${_tag!.ndefAvailable}\nNDEF Type: ${_tag!.ndefType}\nNDEF Writable: ${_tag!.ndefWritable}\nNDEF Can Make Read Only: ${_tag!.ndefCanMakeReadOnly}\nNDEF Capacity: ${_tag!.ndefCapacity}\n\n Transceive Result:\n$_result')
-                    : Text('No tag polled yet.')
+                const SizedBox(height: 10),
+                Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 20),
+                    child: _tag != null
+                        ? Text(
+                            'ID: ${_tag!.id}\nStandard: ${_tag!.standard}\nType: ${_tag!.type}\nATQA: ${_tag!.atqa}\nSAK: ${_tag!.sak}\nHistorical Bytes: ${_tag!.historicalBytes}\nProtocol Info: ${_tag!.protocolInfo}\nApplication Data: ${_tag!.applicationData}\nHigher Layer Response: ${_tag!.hiLayerResponse}\nManufacturer: ${_tag!.manufacturer}\nSystem Code: ${_tag!.systemCode}\nDSF ID: ${_tag!.dsfId}\nNDEF Available: ${_tag!.ndefAvailable}\nNDEF Type: ${_tag!.ndefType}\nNDEF Writable: ${_tag!.ndefWritable}\nNDEF Can Make Read Only: ${_tag!.ndefCanMakeReadOnly}\nNDEF Capacity: ${_tag!.ndefCapacity}\n\n Transceive Result:\n$_result')
+                        : const Text('No tag polled yet.')),
               ])))),
           Center(
             child: Column(
                 mainAxisAlignment: MainAxisAlignment.start,
                 children: <Widget>[
+                  const SizedBox(height: 20),
                   Row(
                     mainAxisAlignment: MainAxisAlignment.spaceAround,
                     children: <Widget>[
@@ -147,7 +171,8 @@ class _MyAppState extends State<MyApp> with SingleTickerProviderStateMixin {
                                 _tag = tag;
                               });
                               if (tag.type == NFCTagType.mifare_ultralight ||
-                                  tag.type == NFCTagType.mifare_classic) {
+                                  tag.type == NFCTagType.mifare_classic ||
+                                  tag.type == NFCTagType.iso15693) {
                                 await FlutterNfcKit.writeNDEFRecords(_records!);
                                 setState(() {
                                   _writeResult = 'OK';
@@ -243,7 +268,9 @@ class _MyAppState extends State<MyApp> with SingleTickerProviderStateMixin {
                       )
                     ],
                   ),
+                  const SizedBox(height: 10),
                   Text('Result: $_writeResult'),
+                  const SizedBox(height: 10),
                   Expanded(
                     flex: 1,
                     child: ListView(
@@ -251,8 +278,10 @@ class _MyAppState extends State<MyApp> with SingleTickerProviderStateMixin {
                         children: List<Widget>.generate(
                             _records!.length,
                             (index) => GestureDetector(
-                                  child: Text(
-                                      'id:${_records![index].idString}\ntnf:${_records![index].tnf}\ntype:${_records![index].type?.toHexString()}\npayload:${_records![index].payload?.toHexString()}\n'),
+                                  child: Padding(
+                                      padding: const EdgeInsets.all(10),
+                                      child: Text(
+                                          'id:${_records![index].idString}\ntnf:${_records![index].tnf}\ntype:${_records![index].type?.toHexString()}\npayload:${_records![index].payload?.toHexString()}\n')),
                                   onTap: () async {
                                     final result = await Navigator.push(context,
                                         MaterialPageRoute(builder: (context) {

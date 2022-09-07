@@ -48,7 +48,7 @@ public class SwiftFlutterNfcKitPlugin: NSObject, FlutterPlugin, NFCTagReaderSess
             if NFCReaderSession.readingAvailable {
                 result("available")
             } else {
-                result("disabled")
+                result("not_supported")
             }
         } else if call.method == "poll" {
             if session != nil {
@@ -176,7 +176,10 @@ public class SwiftFlutterNfcKitPlugin: NSObject, FlutterPlugin, NFCTagReaderSess
                 }
                 if ndefTag != nil {
                     ndefTag!.readNDEF(completionHandler: { (msg: NFCNDEFMessage?, error: Error?) in
-                        if let error = error {
+                        if let nfcError = error as? NFCReaderError, nfcError.errorCode == 403  {
+                            // NDEF tag does not contain any NDEF message
+                            result("[]")
+                        } else if let error = error {
                             result(FlutterError(code: "500", message: "Read NDEF error", details: error.localizedDescription))
                         } else if let msg = msg {
                             var records: [[String: Any]] = []
@@ -211,7 +214,7 @@ public class SwiftFlutterNfcKitPlugin: NSObject, FlutterPlugin, NFCTagReaderSess
                             let jsonString = String(data: jsonData, encoding: .utf8)
                             result(jsonString)
                         } else {
-                            result(FlutterError(code: "500", message: "Got no NDEF records", details: nil))
+                            result(FlutterError(code: "500", message: "Impossible branch reached", details: nil))
                         }
                     })
                 } else {
@@ -314,7 +317,37 @@ public class SwiftFlutterNfcKitPlugin: NSObject, FlutterPlugin, NFCTagReaderSess
             } else {
                 result(FlutterError(code: "406", message: "Session not active", details: nil))
             }
-        } else {
+        } else if call.method == "makeNdefReadOnly" {
+            if tag != nil {
+                var ndefTag: NFCNDEFTag?
+                switch tag {
+                case let .iso7816(tag):
+                    ndefTag = tag
+                case let .miFare(tag):
+                    ndefTag = tag
+                case let .feliCa(tag):
+                    ndefTag = tag
+                case let .iso15693(tag):
+                    ndefTag = tag
+                default:
+                    ndefTag = nil
+                }
+                if ndefTag != nil {
+                    ndefTag!.writeLock(completionHandler: { (error: Error?) in
+                        if let error = error {
+                            result(FlutterError(code: "500", message: "Lock NDEF error", details: error.localizedDescription))
+                        } else {
+                            result(nil)
+                        }
+                    })
+                } else {
+                    result(FlutterError(code: "405", message: "NDEF not supported on this type of card", details: nil))
+                }
+            } else {
+                result(FlutterError(code: "406", message: "No tag polled", details: nil))
+            }
+        }
+        else {
             result(FlutterMethodNotImplemented)
         }
     }
@@ -324,13 +357,26 @@ public class SwiftFlutterNfcKitPlugin: NSObject, FlutterPlugin, NFCTagReaderSess
 
     // from NFCTagReaderSessionDelegate
     public func tagReaderSession(_: NFCTagReaderSession, didInvalidateWithError error: Error) {
-        if result != nil {
-            NSLog("Got error when reading NFC: %@", error.localizedDescription)
+        guard result != nil else { return; }
+        
+        if let nfcError = error as? NFCReaderError {
+            NSLog("Got NFCError when reading NFC: %@", nfcError.localizedDescription)
+            switch nfcError.errorCode {
+            case NFCReaderError.Code.readerSessionInvalidationErrorUserCanceled.rawValue:
+                result?(FlutterError(code: "409", message: "SessionCanceled", details: error.localizedDescription))
+            case NFCReaderError.Code.readerSessionInvalidationErrorSessionTimeout.rawValue:
+                result?(FlutterError(code: "408", message: "SessionTimeOut", details: error.localizedDescription))
+            default:
+                result?(FlutterError(code: "500", message: "Generic NFC Error", details: error.localizedDescription))
+            }
+        } else {
+            NSLog("Got unknown when reading NFC: %@", error.localizedDescription)
             result?(FlutterError(code: "500", message: "Invalidate session with error", details: error.localizedDescription))
-            result = nil
-            session = nil
-            tag = nil
         }
+        
+        result = nil
+        session = nil
+        tag = nil
     }
 
     // from NFCTagReaderSessionDelegate
@@ -434,6 +480,7 @@ public class SwiftFlutterNfcKitPlugin: NSObject, FlutterPlugin, NFCTagReaderSess
                         }
                         if status == NFCNDEFStatus.readWrite {
                             result["ndefWritable"] = true
+                            result["ndefCanMakeReadOnly"] = true
                         }
                         result["ndefCapacity"] = capacity
                     }
